@@ -22,39 +22,67 @@ function App() {
   const handleFileChange = (e) => setFiles({ ...files, [e.target.name]: e.target.files[0] });
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true); setError(''); setResult(null);
+  e.preventDefault();
+  setLoading(true); 
+  setError(''); 
+  setResult(null);
 
-    const dataToSend = new FormData();
-    Object.keys(formData).forEach(k => dataToSend.append(k, formData[k]));
-    if (files.pdfBuro) dataToSend.append('pdfBuro', files.pdfBuro);
-    if (files.pdfDetallado) dataToSend.append('pdfDetallado', files.pdfDetallado);
-    if (files.estadoCuenta) dataToSend.append('estadoCuenta', files.estadoCuenta);
-    if (files.ine) dataToSend.append('ine', files.ine);
-    if (files.comprobanteDomicilio) dataToSend.append('comprobanteDomicilio', files.comprobanteDomicilio);
+  // Validar que los archivos obligatorios estén presentes
+  if (!files.pdfBuro || !files.pdfDetallado || !files.ine || !files.comprobanteDomicilio) {
+    setError('Por favor, sube todos los documentos obligatorios.');
+    setLoading(false);
+    return;
+  }
 
-    try {
-      // CONEXIÓN A PUERTO 8000
-      const response = await axios.post('http://127.0.0.1:8000/predict', dataToSend, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
+  const dataToSend = new FormData();
   
-      setResult(response.data);
-    } catch (err) {
-      console.error("ERROR DETALLADO:", err);
-      
-      if (err.response) {
-        alert(`ERROR DEL SERVIDOR: \nStatus: ${err.response.status}\nMensaje: ${JSON.stringify(err.response.data)}`);
-      } else if (err.request) {
-        alert("ERROR DE CONEXIÓN: El servidor de Python no responde. \n1. Revisa que la terminal negra esté corriendo.\n2. Revisa que diga puerto 8000.");
-      } else {
-        alert(`ERROR INTERNO: ${err.message}`);
-      }
-      setError('Hubo un error. Revisa la alerta.');
-    } finally {
-      setLoading(false);
+  // Añadir campos de texto
+  dataToSend.append('nombre', formData.nombre);
+  dataToSend.append('direccion', formData.direccion);
+  dataToSend.append('correo', formData.correo);
+  dataToSend.append('telefono', formData.telefono);
+  dataToSend.append('rfc', formData.rfc);
+  dataToSend.append('ingresoMensual', formData.ingresoMensual);
+  dataToSend.append('ingresoAnual', formData.ingresoAnual);
+  dataToSend.append('inversionMensual', formData.inversionMensual);
+
+  // Añadir archivos obligatorios
+  dataToSend.append('pdfBuro', files.pdfBuro);
+  dataToSend.append('pdfDetallado', files.pdfDetallado);
+  dataToSend.append('ine', files.ine);
+  dataToSend.append('comprobanteDomicilio', files.comprobanteDomicilio);
+  
+  // Añadir archivo opcional si existe
+  if (files.estadoCuenta) {
+    dataToSend.append('estadoCuenta', files.estadoCuenta);
+  }
+
+  try {
+    const response = await axios.post('/predict', dataToSend);
+    console.log("Respuesta exitosa:", response.data);
+    setResult(response.data);
+
+  } catch (err) {
+    console.error("ERROR COMPLETO:", err);
+    
+    if (err.response) {
+      // Error del servidor (4xx, 5xx)
+      console.error("Datos del error:", err.response.data);
+      console.error("Status:", err.response.status);
+      setError(`Error del servidor: ${err.response.data.error || 'Error desconocido'}`);
+    } else if (err.request) {
+      // Error de red/conexión
+      console.error("No hay respuesta del servidor");
+      setError('No se pudo conectar con el servidor. Asegúrate de que la API esté corriendo en puerto 8000.');
+    } else {
+      // Error en la configuración de la petición
+      console.error("Error:", err.message);
+      setError(`Error: ${err.message}`);
     }
-  };
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans text-gray-800">

@@ -42,6 +42,10 @@ except Exception as e:
 # CONFIGURACIÓN DE FASTAPI
 app = FastAPI(title="API Crédito Médico", version="1.0")
 
+@app.get("/ping")
+def ping():
+    return {"status": "ok", "mensaje": "Conexión exitosa React-Python"}
+
 origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
