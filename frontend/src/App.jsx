@@ -38,10 +38,19 @@ function App() {
       const response = await axios.post('http://127.0.0.1:8000/predict', dataToSend, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
+  
       setResult(response.data);
     } catch (err) {
-      console.error(err);
-      setError('Error al conectar. Verifica que main.py corra en puerto 8000.');
+      console.error("ERROR DETALLADO:", err);
+      
+      if (err.response) {
+        alert(`ERROR DEL SERVIDOR: \nStatus: ${err.response.status}\nMensaje: ${JSON.stringify(err.response.data)}`);
+      } else if (err.request) {
+        alert("ERROR DE CONEXIÓN: El servidor de Python no responde. \n1. Revisa que la terminal negra esté corriendo.\n2. Revisa que diga puerto 8000.");
+      } else {
+        alert(`ERROR INTERNO: ${err.message}`);
+      }
+      setError('Hubo un error. Revisa la alerta.');
     } finally {
       setLoading(false);
     }
