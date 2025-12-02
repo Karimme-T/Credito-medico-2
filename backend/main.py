@@ -1,5 +1,5 @@
 # Librerías
-from fastapi import FastAPI, File, UploadFile, Form
+from fastapi import FastAPI, File, UploadFile, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
@@ -11,6 +11,7 @@ import pdfplumber
 import re
 import io
 import uvicorn 
+import os
 
 # CARGA DEL MODELO Y PREPROCESAMIENTO
 print("Cargando modelo y preprocesadores...")
@@ -213,9 +214,124 @@ def preprocesar_solicitud(s: Solicitud) -> np.ndarray:
     df_ordered = df[all_feature_cols]
     return scaler.transform(df_ordered.values)
 
+# --- VARIABLES GLOBALES PARA RE-ENTRENAMIENTO ---
+CSV_FILE = "datos_acumulados.csv"
+UMBRAL_REENTRENAMIENTO = 300
+
+def reentrenar_modelo():
+    print(f"\n[BACKGROUND] Iniciando proceso de re-entrenamiento con {UMBRAL_REENTRENAMIENTO} nuevos datos...")
+    
+    global model 
+    
+    try:
+        # Cargar los datos acumulados
+        if not os.path.exists(CSV_FILE):
+            print("No se encontró el archivo CSV. Abortando re-entrenamiento.")
+            return
+
+        df = pd.read_csv(CSV_FILE)
+        
+        # Verificar si se tienen datos suficientes
+        if len(df) < UMBRAL_REENTRENAMIENTO:
+            print(f"Aún faltan datos ({len(df)}/{UMBRAL_REENTRENAMIENTO}). Cancelando.")
+            return
+
+        print("Datos cargados. Iniciando preprocesamiento masivo...")
+
+        # PREPARAR LA VARIABLE OBJETIVO (TARGET - Y)
+        
+        mapa_target = {
+            "BUENO": "Good",
+            "REGULAR": "Standard",
+            "MALO": "Bad"
+        }
+        
+        # Filtración de filas que no tengan un segmento válido 
+        df = df[df["buro_segmento"].isin(mapa_target.keys())].copy()
+        
+        # Convertir BUENO -> Good
+        df["target_text"] = df["buro_segmento"].map(mapa_target)
+        
+        # Codificación a números (0, 1, 2) usando el encoder original del entrenamiento
+        # le_target viene de tu joblib cargado al inicio
+        y_train = le_target.transform(df["target_text"])
+        
+        # Convertir a categórico para Keras (One-Hot Encoding implícito o sparse)
+
+        # PREPARAR LAS VARIABLES DE ENTRADA (FEATURES - X)
+        
+        # Mapeo de Payment_of_Min_Amount 
+        def map_payment(x):
+            t = str(x).lower().strip()
+            if t in ["yes", "si", "1"]: return 1
+            elif t in ["no", "0"]: return 0
+            else: return -1
+            
+        df["Payment_of_Min_Amount"] = df["Payment_of_Min_Amount"].apply(map_payment)
+
+        # Rellenar columna auxiliar si falta
+        if "Num_Credit_Inquiries" not in df.columns:
+            df["Num_Credit_Inquiries"] = 0.0
+
+        # Codificar columnas categóricas (Usando los encoders originales)
+        for col in categorical_cols:
+            if col in df.columns and col in label_encoders:
+                le = label_encoders[col]
+                # Aplicar transformación: si aparece una categoría nueva, ponemos -1
+                df[col] = df[col].astype(str).apply(
+                    lambda x: le.transform([x])[0] if x in le.classes_ else -1
+                )
+
+        # Convertir columnas numéricas a float
+        for col in all_feature_cols:
+            if col not in categorical_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+                else:
+                    df[col] = 0.0 # Si falta la columna, rellenar con 0
+
+        # Ordenar columnas exactamente como espera el modelo
+        df_ordered = df[all_feature_cols]
+
+        # Escalar los datos (Usando el scaler original)
+        X_train = scaler.transform(df_ordered.values)
+
+        print(f"🧠 Entrenando modelo con X shape: {X_train.shape}, y shape: {y_train.shape}...")
+
+        # FINE-TUNING (RE-ENTRENAMIENTO)
+
+        model.fit(X_train, y_train, epochs=5, batch_size=32, verbose=0)
+        
+        # GUARDAR Y ACTUALIZAR
+
+        nombre_nuevo_modelo = "modelo_credito_medico_v2.h5"
+        model.save(nombre_nuevo_modelo)
+        print(f"Modelo actualizado guardado en: {nombre_nuevo_modelo}")
+
+        # Recargar el modelo en la variable global para que la API use el nuevo
+        model = keras.models.load_model(nombre_nuevo_modelo)
+        print("API actualizada con el nuevo modelo en caliente.")
+
+        #  LIMPIEZA (ARCHIVAR DATOS USADOS)
+        # Renombrar el CSV para que quede vacío y empiece a juntar los siguientes 300
+        # se guarda con un timestamp o índice para tener historial
+        import time
+        archivo_historico = f"datos_procesados_{int(time.time())}.csv"
+        os.rename(CSV_FILE, archivo_historico)
+        print(f"🧹 Archivo {CSV_FILE} movido a {archivo_historico}. Listo para nuevos datos.")
+
+    except Exception as e:
+        print(f"ERROR CRÍTICO DURANTE EL RE-ENTRENAMIENTO: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
 # ENDPOINT PRINCIPAL (/predict)
 @app.post("/predict")
 async def predict(
+    # Inyección de BackgroundTasks (para el re-entrenamiento)
+    background_tasks: BackgroundTasks,
+
+    # Datos del Formulario (Texto)
     nombre: str = Form(...),
     direccion: str = Form(...),
     correo: str = Form(...),
@@ -224,46 +340,59 @@ async def predict(
     ingresoMensual: float = Form(...),
     ingresoAnual: float = Form(...),
     inversionMensual: float = Form(...),
+
+    # Archivos
     pdfBuro: UploadFile = File(...),
     pdfDetallado: UploadFile = File(...),
     ine: UploadFile = File(...),              
     comprobanteDomicilio: UploadFile = File(...),
     estadoCuenta: Optional[UploadFile] = File(None)
 ):
-    print(f"\n📨 Recibiendo solicitud de: {nombre}")
+    print(f"\nRecibiendo solicitud de: {nombre}")
     
-    # CONSTANTE DE CONVERSIÓN YA QUE EL DATASET ESTA EN DOLARES
+    # CONSTANTE DE CONVERSIÓN (MXN -> USD)
     MXN_TO_USD = 20.5
 
     try:
-        # Leer PDFs
+        # LEER Y PARSEAR LOS PDFS
         score_bytes = await pdfBuro.read()
         detalle_bytes = await pdfDetallado.read()
+
         buro_score_info = parse_buro_score_pdf(score_bytes)
         buro_detalle_info = parse_buro_detalle_pdf(detalle_bytes)
 
         estado_features = {}
-        if estadoCuenta:
+        if estadoCuenta is not None:
             estado_bytes = await estadoCuenta.read()
             estado_features = parse_estado_cuenta_pdf(estado_bytes)
 
-        #Conversión Monetaria (MXN -> USD)
+        # CONVERSIÓN MONETARIA Y PREPARACIÓN DE VARIABLES
+
+        # Convertimos los inputs de Pesos a Dólares para el Modelo
         monthly_salary_usd = float(ingresoMensual) / MXN_TO_USD
         annual_income_usd = float(ingresoAnual) / MXN_TO_USD
         amount_invested_monthly_usd = float(inversionMensual) / MXN_TO_USD
         
-        # Deuda y Balance también se convierten
         outstanding_debt_mxn = float(buro_detalle_info.get("Outstanding_Debt", 0.0))
         outstanding_debt_usd = outstanding_debt_mxn / MXN_TO_USD
         
+        # Balance Mensual
         monthly_balance_mxn = 0.0
         if "Monthly_Balance" in estado_features:
             monthly_balance_mxn = float(estado_features["Monthly_Balance"])
         monthly_balance_usd = monthly_balance_mxn / MXN_TO_USD
         
+        # EMI 
         total_emi_usd = outstanding_debt_usd * 0.05
+        
+        # Credit Mix (Segmento)
+        segmento = buro_score_info.get("buro_segmento")
+        if segmento == "BUENO": credit_mix = "Good"
+        elif segmento == "REGULAR": credit_mix = "Standard"
+        elif segmento == "MALO": credit_mix = "Bad"
+        else: credit_mix = str(buro_detalle_info.get("Credit_Mix", "Unknown"))
 
-        # Construir Objeto (En USD)
+        # DICCIONARIO DE DATOS (EN USD)
         solicitud_data = {
             "Annual_Income": annual_income_usd,
             "Monthly_Inhand_Salary": monthly_salary_usd,
@@ -275,7 +404,7 @@ async def predict(
             "Delay_from_due_date": int(buro_detalle_info.get("Delay_from_due_date", 0)),
             "Num_of_Delayed_Payment": int(buro_detalle_info.get("Num_of_Delayed_Payment", 0)),
             "Changed_Credit_Limit": 0.0,
-            "Credit_Mix": buro_score_info.get("buro_segmento") or "Standard",
+            "Credit_Mix": credit_mix,
             "Outstanding_Debt": outstanding_debt_usd,
             "Credit_Utilization_Ratio": float(buro_detalle_info.get("Credit_Utilization_Ratio", 0.0)),
             "Credit_History_Age": float(buro_detalle_info.get("Credit_History_Age", 36.0)),
@@ -286,14 +415,44 @@ async def predict(
             "Monthly_Balance": monthly_balance_usd,
         }
 
-        # Predicción
+        # LÓGICA DE RE-ENTRENAMIENTO 
+        try:
+            # Crear registro para guardar (Features + Target Real del PDF)
+            registro_guardar = solicitud_data.copy()
+            registro_guardar["buro_segmento"] = segmento 
+            registro_guardar["buro_score_raw"] = buro_score_info.get("buro_score_raw")
+
+            # Guardar en CSV
+            df_nuevo = pd.DataFrame([registro_guardar])
+            escribir_header = not os.path.exists(CSV_FILE)
+            df_nuevo.to_csv(CSV_FILE, mode='a', header=escribir_header, index=False)
+            
+            # Verificar si son 300
+            if os.path.exists(CSV_FILE):
+                df_acumulado = pd.read_csv(CSV_FILE)
+                total_datos = len(df_acumulado)
+                print(f"Datos acumulados para re-entrenamiento: {total_datos}/{UMBRAL_REENTRENAMIENTO}")
+
+                if total_datos >= UMBRAL_REENTRENAMIENTO:
+                    print("¡Umbral alcanzado! Programando re-entrenamiento en segundo plano...")
+                    background_tasks.add_task(reentrenar_modelo)
+        
+        except Exception as e_save:
+            print(f"Error al guardar datos para reentrenamiento (No afecta al usuario): {e_save}")
+
+
+        # PREDICCIÓN DEL MODELO
+
         solicitud_obj = Solicitud(**solicitud_data)
         X_scaled = preprocesar_solicitud(solicitud_obj)
+        
         proba = model.predict(X_scaled)[0]
         pred_idx = int(np.argmax(proba))
         pred_label = le_target.inverse_transform([pred_idx])[0]
 
-        #Resultado
+
+        # RESULTADO Y CONVERSIÓN A MXN
+ 
         class_probs = {clase: float(prob) for clase, prob in zip(le_target.classes_, proba)}
         
         label_lower = str(pred_label).lower()
@@ -301,13 +460,12 @@ async def predict(
         elif "standard" in label_lower: linea_usd = 20000
         else: linea_usd = 5000
         
-        # Convertir resultado de vuelta a MXN para el usuario
         linea_mxn = linea_usd * MXN_TO_USD
 
-        print(f"Análisis exitoso. Resultado: {pred_label}, Monto: {linea_mxn}")
+        print(f"Análisis exitoso. Resultado: {pred_label}, Monto: ${linea_mxn:,.2f} MXN")
 
         return {
-            "mensaje": "Exito",
+            "mensaje": "Análisis completado exitosamente",
             "monto": linea_mxn,
             "credit_score_predicho": pred_label,
             "probabilidades": class_probs,
@@ -318,11 +476,14 @@ async def predict(
         print(f"\n[ERROR] {str(e)}")
         import traceback
         traceback.print_exc()
-        return {"error": str(e), "mensaje": "Error interno del servidor"}
+        return {
+            "error": str(e),
+            "mensaje": "Error interno al procesar la solicitud"
+        }
 
 # ARRANQUE DEL SERVIDOR 
 if __name__ == "__main__":
     # Esto permite correr el archivo directamente con: python main.py
     # Y fuerza a que escuche en todas las direcciones (0.0.0.0)
-    print("Iniciando servidor FastAPI en puerto 8000...")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    print("Iniciando servidor FastAPI en puerto 8080...")
+    uvicorn.run(app, host="0.0.0.0", port=8080)

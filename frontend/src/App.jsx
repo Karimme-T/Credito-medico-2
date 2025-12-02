@@ -58,7 +58,7 @@ function App() {
   }
 
   try {
-    const response = await axios.post('/predict', dataToSend);
+    const response = await axios.post('http://127.0.0.1:8080/predict', dataToSend);
     console.log("Respuesta exitosa:", response.data);
     setResult(response.data);
 
