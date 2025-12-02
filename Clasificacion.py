@@ -248,7 +248,7 @@ for col, (min_val, max_val) in numeric_ranges.items():
 
 
 #%%
-# Mapeo de payment of min amount - PRIMERO (ANTES de imputar)
+# Mapeo de payment of min amount 
 if 'Payment_of_Min_Amount' in categorical_cols:
     unique_train = X_train['Payment_of_Min_Amount'].unique()
     print(f"  Payment_of_Min_Amount - valores únicos en train: {unique_train}")
@@ -275,7 +275,7 @@ if 'Payment_of_Min_Amount' in categorical_cols:
     print(f"✓ Payment_of_Min_Amount mapeado y movido a numéricas")
 
 #%%
-# DESPUÉS: Identificar columnas actualizadas
+# Identificar columnas actualizadas
 categorical_cols_final = X_train.select_dtypes(include=['object']).columns.tolist()
 numerical_cols_final = X_train.select_dtypes(include=['int64', 'float64']).columns.tolist()
 
@@ -283,7 +283,7 @@ print(f"\nColumnas categóricas finales ({len(categorical_cols_final)}): {catego
 print(f"Columnas numéricas finales ({len(numerical_cols_final)}): {numerical_cols_final}")
 
 #%%
-# AHORA SÍ: Imputación numérica
+# Imputación numérica
 print("\nIMPUTACIÓN DE VALORES NULOS")
 if len(numerical_cols_final) > 0:
     imputer_num = SimpleImputer(strategy='median')
@@ -310,7 +310,7 @@ print(f"Val:   {X_val.isnull().sum().sum()}")
 print(f"Test:  {X_test.isnull().sum().sum()}")
 
 # %%
-# Label encoding (ya no procesar Payment_of_Min_Amount aquí)
+# Label encoding 
 label_encoders = {}
 
 for col in categorical_cols_final:
@@ -490,7 +490,7 @@ plt.show()
 # %%
 import joblib
 
-# CRÍTICO: Obtener el orden EXACTO de las columnas del DataFrame usado para fit del scaler
+# Obtener el orden exacto de las columnas del DataFrame usado para fit del scaler
 columnas_en_orden = list(X_train.columns)
 
 print("\n" + "="*60)
@@ -513,7 +513,7 @@ preprocess = {
     "scaler": scaler,
     "categorical_cols": categorical_cols_final,
     "numerical_cols": numerical_cols_final,
-    "feature_order": columnas_en_orden,  # ← NUEVO: orden exacto
+    "feature_order": columnas_en_orden,  
     "le_target": le_target
 }
 
@@ -521,7 +521,7 @@ preprocess = {
 joblib.dump(preprocess, "prepro_credito_medico.pkl")
 model.save("modelo_credito_medico.h5")
 
-print("\n✅ Modelo y preprocesamiento guardados correctamente")
+print("\nModelo y preprocesamiento guardados correctamente")
 print("   - modelo_credito_medico.h5")
 print("   - prepro_credito_medico.pkl")
 
