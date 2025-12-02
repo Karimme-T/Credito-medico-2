@@ -205,3 +205,112 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ===========================
+# PYTHON
+# ===========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.egg-info/
+dist/
+build/
+htmlcov/
+*.log
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ===========================
+# NODE / JAVASCRIPT
+# ===========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.log/
+
+# Dist / build outputs
+dist/
+build/
+out/
+.next/
+.nuxt/
+.esbuild/
+vite.config.js.timestamp-*
+.cache/
+.cache-loader/
+
+# Webpack / Parcel / Vite
+.vite/
+parcel-cache/
+webpack-stats.json
+
+# Logs
+*.log
+*.csv
+
+# Node envs
+coverage/
+.nyc_output/
+
+# Tools
+.storybook/
+.sass-cache/
+.babel-cache/
+.rpt2_cache/
+.pnp/
+.pnp.js
+
+# Dependency files (si quieres ignorar todos)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Skip editor temp files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.tmp
+
+# ===========================
+# FRONTEND FRAMEWORKS
+# ===========================
+# React / Next.js
+.next/
+out/
+export/
+
+# Vue
+*.local
+.happypack
+.vuepress/dist
+
+# Svelte
+.svelte-kit/
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# ===========================
+# MISC
+# ===========================
+*.env
+*.env.*
+.env.local
+.env.development
+.env.production
+.env.test
+
+# Python project
+mlruns/
